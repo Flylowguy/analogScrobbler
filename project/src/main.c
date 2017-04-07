@@ -38,6 +38,7 @@
 /* WiringPi header*/
 #include <wiringPi.h>
 #include <wiringPiSPI.h>
+#include <stdint.h>
 /**********************************************
  *    Local Function Declarations
  **********************************************/
@@ -84,6 +85,22 @@ _musicidstream_completed_with_error_callback(
 	const gnsdk_error_info_t* p_error_info
 	);
 
+/* VS1103 interface functions */
+void WaitForDREQ();
+void WriteVSRegister( uint8_t sci_reg, uint16_t data);
+uint16_t ReadVSRegister(uint8_t sci_reg);
+void WriteData(uint64_t data);
+
+#define READ 0x3
+#define WRITE 0x02
+#define DREQ 0
+#define SCI_CLOCKF 0x03
+#define XRESET 1
+#define SCI_MODE 0x00
+
+
+uint8_t databuffer[4];
+
 /* Local data */
 static gnsdk_cstr_t s_audio_file   = "../../sample_data/teen_spirit_14s.wav";
 static gnsdk_cstr_t s_gdb_location = "../../sample_data/sample_db";
@@ -96,6 +113,97 @@ static gnsdk_cstr_t s_gdb_location = "../../sample_data/sample_db";
 int
 main(int argc, char* argv[])
 {
+	wiringPiSetup();
+	pinMode(DREQ, INPUT);
+	pinMode(XRESET, OUTPUT);
+	int e = wiringPiSPISetup(0, 1755428);
+	printf("e: %x\n", e);
+	//put reset low then high
+	digitalWrite(XRESET, LOW);
+	delay(1000);
+	digitalWrite(XRESET, HIGH);
+
+	printf("Wait for DREQ\n");
+	WaitForDREQ();
+	printf("Read mode\n");
+	uint32_t test = ReadVSRegister(SCI_MODE);
+	printf("%02x\n", test);
+	WaitForDREQ();
+	test = ReadVSRegister(0x05);
+	printf("%02x\n", test);
+	WaitForDREQ();
+	WriteVSRegister(SCI_MODE, 0x0801);
+	printf("Waiting for DREQ\n");
+	WaitForDREQ();
+	printf("Reading mode\n");
+	test = ReadVSRegister(SCI_MODE);
+	printf("%02x\n", test);
+	//WaitForDREQ();;
+	//printf("Read out send test code");
+	//WriteData(0x53EF6EE000000000);
+
+	//printf("Doing software reset\n");
+	//WriteVSRegister(SCI_MODE, 0x0804);
+	//printf("Waiting for DREQ\n");
+	//WaitForDREQ();
+	//printf("DREQ came back!");
+
+	#if 0
+	uint16_t idx = 0;
+
+	//set up pins
+	pinMode(DREQ, INPUT);
+	//set up spi interface
+	wiringPiSPISetup(0, 1755428);
+
+	//wait for DREQ to go high
+	WaitForDREQ();
+	WriteVSRegister(SCI_CLOCKF, 0xC3E8);
+	WaitForDREQ();
+	WriteVSRegister(SCI_MODE, 0x0804);
+	WaitForDREQ();
+	WriteVSRegister(SCI_VOL, 0x1414);
+	WriteVSRegister(SCI_BASS, 0);
+	WriteVSRegister(SCI_MIXERVOL, 0x8000U);
+	WriteVSRegister(SCI_ADPCMRECCTL,25+20);
+	WriteVSRegister(SCI_MODE, 0x08c8);
+
+	//open file for recording
+	FILE *fopen("recording", "w+");
+	//begin recording
+	for(idx = 0; idx < sizeof(header); idx++)
+	{
+		db[idx] = header[idx];
+	}
+	db[24] = sampleRate;
+	db[25] = sampleRate>>8;
+
+	do{
+		n = 8 * ((ReadVSRegister(SCI_IN1) >> 8) & 0xFF);
+		Yield(1);
+	} while(n >= 480);
+
+	int i = 0;
+
+	while(i < 10000000)
+	{
+		while(idx < 512){
+			do {
+				n = 8 * ((ReadVSRegister(SCI_IN1) >> 8) & 0xFF);
+				Yield(1);
+			}while(n < 16);
+
+			while(n--){
+				w = ReadVSRegister(SCI_IN0);
+				db[idx++] = w>>8;
+				db[idx++] = w&0xFF;
+			}
+		}
+		fwrite(db, )
+	}
+	#endif
+	//initiate sin test on board
+	#if 0
 	gnsdk_user_handle_t user_handle        = GNSDK_NULL;
 	const char*         client_id          = NULL;
 	const char*         client_id_tag      = NULL;
@@ -103,10 +211,10 @@ main(int argc, char* argv[])
 	const char*         license_path       = NULL;
 	int                 use_local          = -1;
 	int                 rc                 = 0;
-	
+
 
 	//test if wiring pi is working
-	
+
 	wiringPiSPISetup(0, 500001);
 	if (argc == 5)
 	{
@@ -150,9 +258,55 @@ main(int argc, char* argv[])
 	}
 
 	return rc;
-
+#endif
 }  /* main() */
 
+void WaitForDREQ()
+{
+	//check if DREQ is high, if not, block until it is
+	while(!(digitalRead(DREQ)));
+}
+
+void WriteData(uint64_t data)
+{
+	uint8_t bigbuffer[8];
+	bigbuffer[0] = (uint8_t)(data >> 56);
+	bigbuffer[1] = (uint8_t)(data >> 48);
+	bigbuffer[2] = (uint8_t)(data >> 40);
+	bigbuffer[3] = (uint8_t)(data >> 32);
+	bigbuffer[4] = (uint8_t)(data >> 24);
+	bigbuffer[5] = (uint8_t)(data >> 16);
+	bigbuffer[6] = (uint8_t)(data >> 8);
+	bigbuffer[7] = (uint8_t)(data);
+	wiringPiSPIDataRW(0, bigbuffer, 8);
+}
+
+void WriteVSRegister( uint8_t sci_reg, uint16_t data)
+{
+	//send write opcode, address, and data
+	//prepare databuffer
+	//databuffer = (WRITE | (sci_reg << 8) | (data << 16));
+	//output to spi interface
+	databuffer[0] = WRITE;
+	databuffer[1] = sci_reg;
+	databuffer[2] = (uint8_t)(data >> 8);
+	databuffer[3] = (uint8_t)(data & 0xFF);
+	//databuffer[6] = (uint8_t)((data & 0x00F0) >> 1);
+	//databuffer[7] = (uint8_t)(data & 0x000F);
+	wiringPiSPIDataRW(0, databuffer, 4);
+}
+
+uint16_t ReadVSRegister(uint8_t sci_reg)
+{
+	//prepare databuffer
+	//databuffer = ((READ << 8) | (sci_reg));
+	databuffer[0] = READ;
+	databuffer[1] = sci_reg;
+	databuffer[2] = 0x00;
+	databuffer[3] = 0x00;
+	wiringPiSPIDataRW(0, databuffer, 4);
+	return ((databuffer[2] << 4) | databuffer[3]);
+}
 
 /******************************************************************
  *
@@ -214,14 +368,14 @@ _get_user_handle(
 	gnsdk_error_t       error                     = GNSDK_SUCCESS;
 	FILE*               file                      = NULL;
 	int                 rc                        = 0;
-	
+
 	/* Creating a GnUser is required before performing any queries to Gracenote services,
 	 * and such APIs in the SDK require a GnUser to be provided. GnUsers can be created
 	 * 'Online' which means they are created by the Gracenote backend and fully vetted.
 	 * Or they can be create 'Local Only' which means they are created locally by the
 	 * SDK but then can only be used locally by the SDK.
 	 */
-	
+
 	/* If the application cannot go online at time of user-regstration it should
 	 * create a 'local only' user. If connectivity is available, an Online user should
 	 * be created. An Online user can do both Local and Online queries.
@@ -241,7 +395,7 @@ _get_user_handle(
 	{
 		fgets(serialized_user_buf, sizeof(serialized_user_buf), file);
 		fclose(file);
-		
+
 		/* Create the user handle from the saved user */
 		error = gnsdk_manager_user_create(serialized_user_buf, client_id, &user_handle);
 		if (GNSDK_SUCCESS == error)
@@ -252,11 +406,11 @@ _get_user_handle(
 				*p_user_handle = user_handle;
 				return 0;
 			}
-			
+
 			/* else desired regmode is online, but user is localonly - discard and register new online user */
 			gnsdk_manager_user_release(user_handle);
 		}
-		
+
 		if (GNSDK_SUCCESS != error)
 		{
 			_display_last_error(__LINE__);
@@ -291,10 +445,10 @@ _get_user_handle(
 				fclose(file);
 			}
 		}
-		
+
 		gnsdk_manager_string_free(serialized_user);
 	}
-	
+
 	if (GNSDK_SUCCESS == error)
 	{
 		*p_user_handle = user_handle;
@@ -323,8 +477,8 @@ _display_embedded_db_info(void)
 	gnsdk_error_t  error       = GNSDK_SUCCESS;
 	gnsdk_cstr_t   gdb_version = GNSDK_NULL;
 	gnsdk_uint32_t ordinal     = 0;
-	
-	
+
+
 	error = gnsdk_lookup_local_storage_info_count(
 		GNSDK_LOOKUP_LOCAL_STORAGE_METADATA,
 		GNSDK_LOOKUP_LOCAL_STORAGE_GDB_VERSION,
@@ -351,7 +505,7 @@ _display_embedded_db_info(void)
 	{
 		_display_last_error(__LINE__);
 	}
-	
+
 }  /* _display_embedded_db_info() */
 
 /******************************************************************
@@ -526,7 +680,7 @@ _init_gnsdk(
 			rc = -1;
 		}
 	}
-	
+
 	if (use_local)
 	{
 		/* Set folder location of local database */
@@ -542,7 +696,7 @@ _init_gnsdk(
 				rc = -1;
 			}
 		}
-		
+
 		/* Initialize the Lookup Local Library */
 		if (0 == rc)
 		{
@@ -569,7 +723,7 @@ _init_gnsdk(
 				rc = -1;
 			}
 		}
-		
+
 		if (0 == rc)
 		{
 			error = gnsdk_lookup_localstream_storage_location_set(s_gdb_location);
@@ -602,7 +756,7 @@ _init_gnsdk(
 			rc = -1;
 		}
 	}
-	
+
 	/* Get a user handle for our client ID.  This will be passed in for all queries */
 	if (0 == rc)
 	{
@@ -614,7 +768,7 @@ _init_gnsdk(
 			&user_handle
 			);
 	}
-	
+
 	/* Set the user option to use our local Gracenote DB unless overridden. */
 	if (use_local)
 	{
@@ -720,7 +874,7 @@ _display_track_gdo(
 	{
 		_display_last_error(__LINE__);
 	}
-	
+
 	/* Track number on album. */
 	error = gnsdk_manager_gdo_value_get( track_gdo, GNSDK_GDO_VALUE_TRACK_NUMBER, 1, &value_1 );
 	if (GNSDK_SUCCESS == error)
@@ -786,8 +940,8 @@ _display_album_gdo(
 	gnsdk_gdo_handle_t title_gdo = GNSDK_NULL;
 	gnsdk_gdo_handle_t track_gdo = GNSDK_NULL;
 	gnsdk_cstr_t       value     = GNSDK_NULL;
-	
-	
+
+
 	/* Album Title */
 	error = gnsdk_manager_gdo_child_get( album_gdo, GNSDK_GDO_CHILD_TITLE_OFFICIAL, 1, &title_gdo );
 	if (GNSDK_SUCCESS == error)
@@ -796,7 +950,7 @@ _display_album_gdo(
 		if (GNSDK_SUCCESS == error)
 		{
 			printf( "%16s %s\n", "Title:", value );
-			
+
 			/* Matched track number. */
 			error = gnsdk_manager_gdo_value_get( album_gdo, GNSDK_GDO_VALUE_TRACK_MATCHED_NUM, 1, &value );
 			if (GNSDK_SUCCESS == error)
@@ -828,7 +982,7 @@ _display_album_gdo(
 	{
 		_display_last_error(__LINE__);
 	}
-	
+
 }  /* _display_album_gdo() */
 
 
@@ -965,7 +1119,7 @@ _do_sample_musicid_stream(
 	callbacks.callback_identifying_status = _musicidstream_identifying_status_callback;
 	callbacks.callback_result_available   = _musicidstream_result_available_callback;
 	callbacks.callback_error              = _musicidstream_completed_with_error_callback;
-	
+
 	printf("Got past callbacks.\n");
 
 	/* Create the channel handle */
