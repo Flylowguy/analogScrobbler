@@ -39,7 +39,6 @@
 #include <alsa/asoundlib.h>
 #include <stdint.h>
 #include <sys/time.h>
-
 /**********************************************
  *    Local Function Declarations
  **********************************************/
@@ -131,6 +130,7 @@ static int done = 0;
 int
 main(int argc, char* argv[])
 {
+
 	int err;
 	//start by opening pcm device
 	if((err = snd_pcm_open(&handle, device, stream, 0)) < 0) {
@@ -195,17 +195,17 @@ main(int argc, char* argv[])
 		printf("Can't se period equal to buffer size (%lu == %lu)\n", *(unsigned long *)period_size, (unsigned long)buffer_size);
 	}
 
-	printf("\n" "Accepted HWPARAMS:\n%*iHz (%s)"
-		   "\n%*s (%s)"
-		   "\n%*i (%s)"
-		   "\n%*lu (%s)"
-		   "\n%*lu (%s)"
-		   "\n",
-		   28, rate, "sampling rate",
-		   30, snd_pcm_format_name(format), "sample format",
-		   30, channels, "number of channels",
-		   30, buffer_size, "h/w ring buffer size in frames",
-		   30, *period_size, "period size in frames");
+	//printf("\n" "Accepted HWPARAMS:\n%*iHz (%s)"
+	//	   "\n%*s (%s)"
+	//	   "\n%*i (%s)"
+	//	   "\n%*lu (%s)"
+	//	   "\n%*lu (%s)"
+	//	   "\n",
+	//	   28, rate, "sampling rate",
+	//	   30, snd_pcm_format_name(format), "sample format",
+	//	   30, channels, "number of channels",
+	//	   30, buffer_size, "h/w ring buffer size in frames",
+	//	   30, *period_size, "period size in frames");
 
 	//alloc buffer to hold PCM period data
 	unsigned long fmt_phys_width_bits = snd_pcm_format_physical_width(format);
@@ -217,11 +217,11 @@ main(int argc, char* argv[])
 		printf("Insufficient memory.\n");
 	}
 
-	printf("\n" "PCM Data Transfer Stats:"
-		   "\n%*lu bits/sample, %lu bits/frame"
-		   "\n%*lu period size in bytes (pcm data transfer size)"
-		   "\n", 30, fmt_phys_width_bits,
-		   fmt_phys_width_bits_per_frame, 30, chunk_bytes);
+	//printf("\n" "PCM Data Transfer Stats:"
+	//	   "\n%*lu bits/sample, %lu bits/frame"
+	//	   "\n%*lu period size in bytes (pcm data transfer size)"
+	//	   "\n", 30, fmt_phys_width_bits,
+	//	   fmt_phys_width_bits_per_frame, 30, chunk_bytes);
 
 
 	gnsdk_user_handle_t user_handle        = GNSDK_NULL;
@@ -386,7 +386,7 @@ _get_user_handle(
 	}
 	else
 	{
-		printf("\nInfo: No stored user - this must be the app's first run.\n");
+		//printf("\nInfo: No stored user - this must be the app's first run.\n");
 	}
 
 	/*
@@ -462,7 +462,7 @@ _display_embedded_db_info(void)
 		);
 		if (!error)
 		{
-			printf("Gracenote DB Version : %s\n", gdb_version);
+			//printf("Gracenote DB Version : %s\n", gdb_version);
 		}
 		else
 		{
@@ -487,11 +487,11 @@ static void
 _display_gnsdk_product_info(void)
 {
 	/* Display GNSDK Version infomation */
-	printf(
-		"\nGNSDK Product Version    : %s \t(built %s)\n",
-		gnsdk_manager_get_product_version(),
-		gnsdk_manager_get_build_date()
-	);
+	//printf(
+	//	"\nGNSDK Product Version    : %s \t(built %s)\n",
+	//	gnsdk_manager_get_product_version(),
+	//	gnsdk_manager_get_build_date()
+	//);
 
 }  /* _display_gnsdk_product_info() */
 
@@ -820,6 +820,8 @@ _display_track_gdo(
 {
 	gnsdk_error_t      error     = GNSDK_SUCCESS;
 	gnsdk_gdo_handle_t title_gdo = GNSDK_NULL;
+	gnsdk_gdo_handle_t artist_gdo = GNSDK_NULL;
+	gnsdk_gdo_handle_t contributor = GNSDK_NULL;
 	gnsdk_cstr_t       value_1     = GNSDK_NULL;
 	gnsdk_cstr_t       value_2     = GNSDK_NULL;
 
@@ -830,7 +832,8 @@ _display_track_gdo(
 		error = gnsdk_manager_gdo_value_get( title_gdo, GNSDK_GDO_VALUE_DISPLAY, 1, &value_1 );
 		if (GNSDK_SUCCESS == error)
 		{
-			printf( "%26s %s\n", "Title:", value_1 );
+			//printf( "%26s %s\n", "Title:", value_1 );
+			printf("\"track_title\":\"%s\",", value_1);
 		}
 		else
 		{
@@ -847,7 +850,8 @@ _display_track_gdo(
 	error = gnsdk_manager_gdo_value_get( track_gdo, GNSDK_GDO_VALUE_TRACK_NUMBER, 1, &value_1 );
 	if (GNSDK_SUCCESS == error)
 	{
-		printf( "%26s %s\n", "Track number:", value_1 );
+		//printf( "%26s %s\n", "Track number:", value_1 );
+		//printf("\"track_number\":\"%s\",", value_1);
 	}
 	else
 	{
@@ -861,7 +865,8 @@ _display_track_gdo(
 		error = gnsdk_manager_gdo_value_get( track_gdo, GNSDK_GDO_VALUE_DURATION_UNITS, 1, &value_2 );
 		if (GNSDK_SUCCESS == error)
 		{
-			printf( "%26s %s %s\n", "Track duration:", value_1, value_2 );
+			//printf( "%26s %s %s\n", "Track duration:", value_1, value_2 );
+			printf("\"track_duration\":\"%s\",", value_1);
 		}
 		else
 		{
@@ -877,7 +882,8 @@ _display_track_gdo(
 	error = gnsdk_manager_gdo_value_get( track_gdo, GNSDK_GDO_VALUE_MATCH_POSITION_MS, 1, &value_1 );
 	if (GNSDK_SUCCESS == error)
 	{
-		printf( "%26s %s ms\n", "Match position:", value_1 );
+		//printf( "%26s %s ms\n", "Match position:", value_1 );
+		printf("\"track_position\":\"%s\"}", value_1);
 	}
 	else
 	{
@@ -888,7 +894,7 @@ _display_track_gdo(
 	error = gnsdk_manager_gdo_value_get( track_gdo, GNSDK_GDO_VALUE_MATCH_DURATION_MS, 1, &value_1 );
 	if (GNSDK_SUCCESS == error)
 	{
-		printf( "%26s %s ms\n", "Match duration:", value_1 );
+		//printf( "%26s %s ms\n", "Match duration:", value_1 );
 	}
 
 }  /* _display_track_gdo() */
@@ -908,6 +914,9 @@ _display_album_gdo(
 	gnsdk_gdo_handle_t title_gdo = GNSDK_NULL;
 	gnsdk_gdo_handle_t track_gdo = GNSDK_NULL;
 	gnsdk_cstr_t       value     = GNSDK_NULL;
+	gnsdk_gdo_handle_t credit_gdo = GNSDK_NULL;
+	gnsdk_gdo_handle_t contributor_gdo = GNSDK_NULL;
+	gnsdk_gdo_handle_t name_gdo = GNSDK_NULL;
 
 
 	/* Album Title */
@@ -917,13 +926,32 @@ _display_album_gdo(
 		error = gnsdk_manager_gdo_value_get( title_gdo, GNSDK_GDO_VALUE_DISPLAY, 1, &value );
 		if (GNSDK_SUCCESS == error)
 		{
-			printf( "%16s %s\n", "Title:", value );
+			//printf( "%16s %s\n", "Title:", value );
+			printf("{\"album_title\":\"%s\",", value);
+
+			/* artist */
+			error = gnsdk_manager_gdo_child_get(album_gdo, GNSDK_GDO_CHILD_ARTIST, 1, &credit_gdo);
+			if(GNSDK_SUCCESS == error)
+			{
+				error = gnsdk_manager_gdo_child_get(credit_gdo, GNSDK_GDO_CHILD_CONTRIBUTOR, 1, &contributor_gdo);
+				if(GNSDK_SUCCESS == error)
+				{
+					error = gnsdk_manager_gdo_child_get(contributor_gdo, GNSDK_GDO_CHILD_NAME_OFFICIAL, 1, &name_gdo);
+					if(GNSDK_SUCCESS == error)
+					{
+						error = gnsdk_manager_gdo_value_get(name_gdo, GNSDK_GDO_VALUE_DISPLAY, 1, &value);
+						printf("\"artist\":\"%s\",", value);
+					}
+				}
+			}
 
 			/* Matched track number. */
 			error = gnsdk_manager_gdo_value_get( album_gdo, GNSDK_GDO_VALUE_TRACK_MATCHED_NUM, 1, &value );
+			printf("\"track_number\":\"%s\",", value);
 			if (GNSDK_SUCCESS == error)
 			{
-				printf( "%16s %s\n", "Matched Track:", value );
+				//printf( "%16s %s\n", "Matched Track:", value );
+				//printf("\"track_number\":\"%s\",", value);
 				error = gnsdk_manager_gdo_child_get( album_gdo, GNSDK_GDO_CHILD_TRACK_MATCHED, 1, &track_gdo );
 				if (GNSDK_SUCCESS == error)
 				{
@@ -1209,7 +1237,7 @@ _do_sample_musicid_stream(
 	gnsdk_error_t                        error          = GNSDK_SUCCESS;
 	int                                  rc             = 0;
 
-	printf("\n*****Sample MID-Stream Query*****\n");
+	//printf("\n*****Sample MID-Stream Query*****\n");
 
 	/* MusicId-Stream requires callbacks to receive identification results.
 	** He we set the various callbacks for results ands status.
@@ -1257,12 +1285,12 @@ _musicidstream_identifying_status_callback(
 	gnsdk_bool_t*                            pb_abort
 	)
 {
-	printf("\n%s: status = %d\n\n", __FUNCTION__, status);
+	//printf("\n%s: status = %d\n\n", __FUNCTION__, status);
 	/* This sample chooses to stop the audio processing when the identification
 	** is complete so it stops feeding in audio */
 	if (status == gnsdk_musicidstream_identifying_ended)
 	{
-		printf("\n%s aborting - overrun: %d\n\n", __FUNCTION__, xrunCount);
+		//printf("\n%s aborting - overrun: %d\n\n", __FUNCTION__, xrunCount);
 		*pb_abort = GNSDK_TRUE;
 	}
 
@@ -1303,7 +1331,7 @@ _musicidstream_result_available_callback(
 		}
 		else
 		{
-			printf("\n%d albums found for the input.\n", count);
+			//printf("\n%d albums found for the input.\n", count);
 
 			/* we display first album result */
 			error = gnsdk_manager_gdo_child_get(
@@ -1318,7 +1346,7 @@ _musicidstream_result_available_callback(
 			}
 			else
 			{
-				printf( "%16s\n", "Album result: 1");
+				//printf( "%16s\n", "Album result: 1");
 
 				_display_album_gdo(album_gdo);
 				gnsdk_manager_gdo_release(album_gdo);
