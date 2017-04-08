@@ -35,10 +35,11 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* WiringPi header*/
-#include <wiringPi.h>
-#include <wiringPiSPI.h>
+/* alsa headers */
+#include <alsa/asoundlib.h>
 #include <stdint.h>
+#include <sys/time.h>
+
 /**********************************************
  *    Local Function Declarations
  **********************************************/
@@ -85,25 +86,42 @@ _musicidstream_completed_with_error_callback(
 	const gnsdk_error_info_t* p_error_info
 	);
 
-/* VS1103 interface functions */
-void WaitForDREQ();
-void WriteVSRegister( uint8_t sci_reg, uint16_t data);
-uint16_t ReadVSRegister(uint8_t sci_reg);
-void WriteData(uint64_t data);
-
-#define READ 0x3
-#define WRITE 0x02
-#define DREQ 0
-#define SCI_CLOCKF 0x03
-#define XRESET 1
-#define SCI_MODE 0x00
-
-
-uint8_t databuffer[4];
-
 /* Local data */
 static gnsdk_cstr_t s_audio_file   = "../../sample_data/teen_spirit_14s.wav";
 static gnsdk_cstr_t s_gdb_location = "../../sample_data/sample_db";
+
+static char *device = "plughw:1,0";
+static snd_pcm_t *handle;
+static int verbose = 0;
+
+#define HWPARAMS_FORMAT SND_PCM_FORMAT_S16_LE
+#define HWPARAMS_CHANNELS 1
+#define HWPARAMS_RATE 48000
+#define HWPARAMS_PERIOD_FRAMES 1024
+
+static inline void do_capture(void);
+static inline ssize_t pcm_read(u_char * data, size_t rcount);
+static void xrun(void);
+static void suspend(void);
+
+static xrunCount = 0;
+
+static struct {
+	snd_pcm_format_t format;
+	unsigned int channels;
+	unsigned int rate;
+	snd_pcm_uframes_t period_frames;
+	snd_pcm_uframes_t buffer_frames;
+} hwparams = {
+.format = HWPARAMS_FORMAT,.channels = HWPARAMS_CHANNELS,.rate =
+	    HWPARAMS_RATE,.period_frames = HWPARAMS_PERIOD_FRAMES};
+
+static snd_pcm_stream_t stream = SND_PCM_STREAM_CAPTURE;
+
+static u_char *audiobuf = NULL;
+
+static int done = 0;
+
 
 /******************************************************************
  *
@@ -113,97 +131,99 @@ static gnsdk_cstr_t s_gdb_location = "../../sample_data/sample_db";
 int
 main(int argc, char* argv[])
 {
-	wiringPiSetup();
-	pinMode(DREQ, INPUT);
-	pinMode(XRESET, OUTPUT);
-	int e = wiringPiSPISetup(0, 1755428);
-	printf("e: %x\n", e);
-	//put reset low then high
-	digitalWrite(XRESET, LOW);
-	delay(1000);
-	digitalWrite(XRESET, HIGH);
-
-	printf("Wait for DREQ\n");
-	WaitForDREQ();
-	printf("Read mode\n");
-	uint32_t test = ReadVSRegister(SCI_MODE);
-	printf("%02x\n", test);
-	WaitForDREQ();
-	test = ReadVSRegister(0x05);
-	printf("%02x\n", test);
-	WaitForDREQ();
-	WriteVSRegister(SCI_MODE, 0x0801);
-	printf("Waiting for DREQ\n");
-	WaitForDREQ();
-	printf("Reading mode\n");
-	test = ReadVSRegister(SCI_MODE);
-	printf("%02x\n", test);
-	//WaitForDREQ();;
-	//printf("Read out send test code");
-	//WriteData(0x53EF6EE000000000);
-
-	//printf("Doing software reset\n");
-	//WriteVSRegister(SCI_MODE, 0x0804);
-	//printf("Waiting for DREQ\n");
-	//WaitForDREQ();
-	//printf("DREQ came back!");
-
-	#if 0
-	uint16_t idx = 0;
-
-	//set up pins
-	pinMode(DREQ, INPUT);
-	//set up spi interface
-	wiringPiSPISetup(0, 1755428);
-
-	//wait for DREQ to go high
-	WaitForDREQ();
-	WriteVSRegister(SCI_CLOCKF, 0xC3E8);
-	WaitForDREQ();
-	WriteVSRegister(SCI_MODE, 0x0804);
-	WaitForDREQ();
-	WriteVSRegister(SCI_VOL, 0x1414);
-	WriteVSRegister(SCI_BASS, 0);
-	WriteVSRegister(SCI_MIXERVOL, 0x8000U);
-	WriteVSRegister(SCI_ADPCMRECCTL,25+20);
-	WriteVSRegister(SCI_MODE, 0x08c8);
-
-	//open file for recording
-	FILE *fopen("recording", "w+");
-	//begin recording
-	for(idx = 0; idx < sizeof(header); idx++)
-	{
-		db[idx] = header[idx];
+	int err;
+	//start by opening pcm device
+	if((err = snd_pcm_open(&handle, device, stream, 0)) < 0) {
+		printf("PCM Open error (%s)\n", snd_strerror(err));
 	}
-	db[24] = sampleRate;
-	db[25] = sampleRate>>8;
 
-	do{
-		n = 8 * ((ReadVSRegister(SCI_IN1) >> 8) & 0xFF);
-		Yield(1);
-	} while(n >= 480);
+	//set up hwparams
+	ssize_t err2;
+	unsigned int channels = hwparams.channels;
+	unsigned int rrate, rate = hwparams.rate;
+	snd_pcm_format_t format = hwparams.format;
+	snd_pcm_uframes_t *period_size = &hwparams.period_frames;
+	snd_pcm_uframes_t buffer_size;
 
-	int i = 0;
+	snd_pcm_hw_params_t *params;
 
-	while(i < 10000000)
-	{
-		while(idx < 512){
-			do {
-				n = 8 * ((ReadVSRegister(SCI_IN1) >> 8) & 0xFF);
-				Yield(1);
-			}while(n < 16);
+	snd_pcm_hw_params_alloca(&params);
 
-			while(n--){
-				w = ReadVSRegister(SCI_IN0);
-				db[idx++] = w>>8;
-				db[idx++] = w&0xFF;
-			}
-		}
-		fwrite(db, )
+	err = snd_pcm_hw_params_any(handle, params);
+	if(err < 0) {
+		printf("%s \n", snd_strerror(err));
 	}
-	#endif
-	//initiate sin test on board
-	#if 0
+
+	err = snd_pcm_hw_params_set_access(handle, params, SND_PCM_ACCESS_RW_INTERLEAVED);
+	if(err < 0) {
+		printf("%s \n", snd_strerror(err));
+	}
+
+	err = snd_pcm_hw_params_set_format(handle, params, format);
+	if(err < 0) {
+		printf("%s \n", snd_strerror(err));
+	}
+
+	err = snd_pcm_hw_params_set_channels(handle, params, channels);
+	if(err < 0) {
+		printf("%s \n", snd_strerror(err));
+	}
+
+	rrate = rate;
+	err = snd_pcm_hw_params_set_rate_near(handle, params, &rrate, 0);
+	if(err < 0) {
+		printf("Rate %iHz not available. %s\n", rate, snd_strerror(err));
+	}
+
+	if(rrate != rate){
+		printf("Rate doesn't match (requested %iHz, got %iHz)\n", rate, rrate);
+	}
+
+	err = snd_pcm_hw_params_set_period_size_near(handle, params, period_size, 0);
+
+	if(err < 0) {
+		printf("%s\n", snd_strerror(err));
+	}
+
+	err = snd_pcm_hw_params(handle, params);
+	if(err < 0){
+		printf("%s\n", snd_strerror(err));
+	}
+
+	snd_pcm_hw_params_get_buffer_size(params, &buffer_size);
+	if(*period_size == buffer_size){
+		printf("Can't se period equal to buffer size (%lu == %lu)\n", *(unsigned long *)period_size, (unsigned long)buffer_size);
+	}
+
+	printf("\n" "Accepted HWPARAMS:\n%*iHz (%s)"
+		   "\n%*s (%s)"
+		   "\n%*i (%s)"
+		   "\n%*lu (%s)"
+		   "\n%*lu (%s)"
+		   "\n",
+		   28, rate, "sampling rate",
+		   30, snd_pcm_format_name(format), "sample format",
+		   30, channels, "number of channels",
+		   30, buffer_size, "h/w ring buffer size in frames",
+		   30, *period_size, "period size in frames");
+
+	//alloc buffer to hold PCM period data
+	unsigned long fmt_phys_width_bits = snd_pcm_format_physical_width(format);
+	unsigned long fmt_phys_width_bits_per_frame = fmt_phys_width_bits * channels;
+	unsigned long chunk_bytes = *period_size * fmt_phys_width_bits_per_frame / 8;
+
+	audiobuf = calloc(chunk_bytes, sizeof(u_char));
+	if(audiobuf == NULL){
+		printf("Insufficient memory.\n");
+	}
+
+	printf("\n" "PCM Data Transfer Stats:"
+		   "\n%*lu bits/sample, %lu bits/frame"
+		   "\n%*lu period size in bytes (pcm data transfer size)"
+		   "\n", 30, fmt_phys_width_bits,
+		   fmt_phys_width_bits_per_frame, 30, chunk_bytes);
+
+
 	gnsdk_user_handle_t user_handle        = GNSDK_NULL;
 	const char*         client_id          = NULL;
 	const char*         client_id_tag      = NULL;
@@ -212,10 +232,6 @@ main(int argc, char* argv[])
 	int                 use_local          = -1;
 	int                 rc                 = 0;
 
-
-	//test if wiring pi is working
-
-	wiringPiSPISetup(0, 500001);
 	if (argc == 5)
 	{
 		client_id     = argv[1];
@@ -258,55 +274,7 @@ main(int argc, char* argv[])
 	}
 
 	return rc;
-#endif
 }  /* main() */
-
-void WaitForDREQ()
-{
-	//check if DREQ is high, if not, block until it is
-	while(!(digitalRead(DREQ)));
-}
-
-void WriteData(uint64_t data)
-{
-	uint8_t bigbuffer[8];
-	bigbuffer[0] = (uint8_t)(data >> 56);
-	bigbuffer[1] = (uint8_t)(data >> 48);
-	bigbuffer[2] = (uint8_t)(data >> 40);
-	bigbuffer[3] = (uint8_t)(data >> 32);
-	bigbuffer[4] = (uint8_t)(data >> 24);
-	bigbuffer[5] = (uint8_t)(data >> 16);
-	bigbuffer[6] = (uint8_t)(data >> 8);
-	bigbuffer[7] = (uint8_t)(data);
-	wiringPiSPIDataRW(0, bigbuffer, 8);
-}
-
-void WriteVSRegister( uint8_t sci_reg, uint16_t data)
-{
-	//send write opcode, address, and data
-	//prepare databuffer
-	//databuffer = (WRITE | (sci_reg << 8) | (data << 16));
-	//output to spi interface
-	databuffer[0] = WRITE;
-	databuffer[1] = sci_reg;
-	databuffer[2] = (uint8_t)(data >> 8);
-	databuffer[3] = (uint8_t)(data & 0xFF);
-	//databuffer[6] = (uint8_t)((data & 0x00F0) >> 1);
-	//databuffer[7] = (uint8_t)(data & 0x000F);
-	wiringPiSPIDataRW(0, databuffer, 4);
-}
-
-uint16_t ReadVSRegister(uint8_t sci_reg)
-{
-	//prepare databuffer
-	//databuffer = ((READ << 8) | (sci_reg));
-	databuffer[0] = READ;
-	databuffer[1] = sci_reg;
-	databuffer[2] = 0x00;
-	databuffer[3] = 0x00;
-	wiringPiSPIDataRW(0, databuffer, 4);
-	return ((databuffer[2] << 4) | databuffer[3]);
-}
 
 /******************************************************************
  *
@@ -999,36 +967,33 @@ _process_audio(
 	gnsdk_musicidstream_channel_handle_t channel_handle
 	)
 {
-	printf("Inside _process_audio\n");
 	gnsdk_error_t error           = GNSDK_SUCCESS;
 	gnsdk_size_t  read_size       = 0;
-	gnsdk_byte_t  pcm_audio[2048] = {0};
+	gnsdk_byte_t  pcm_audio[1024] = {0};
 	FILE*         p_file          = NULL;
 	int           rc              = 0;
 
 	/* check file for existence */
-	p_file = fopen(s_audio_file, "rb");
-	printf("Past opening of audio file.\n");
-	if (p_file == NULL)
-	{
-		printf("\n\n!!!!Failed to open input file: %s!!!\n\n", s_audio_file);
-		return -1;
-	}
+	//p_file = fopen(s_audio_file, "rb");
+	//printf("Past opening of audio file.\n");
+	//if (p_file == NULL)
+	//{
+	//	printf("\n\n!!!!Failed to open input file: %s!!!\n\n", s_audio_file);
+	//	return -1;
+	//}
 
 	/* skip the wave header (first 44 bytes). we know the format of our sample files */
-	if (0 != fseek(p_file, 44, SEEK_SET))
-	{
-		fclose(p_file);
-		return -1;
-	}
-	printf("Just before fingerprinter is initialized.\n");
-	/* initialize the fingerprinter
-	   Note: The sample file shipped is a 44100Hz 16-bit stereo (2 channel) wav file */
+	//if (0 != fseek(p_file, 44, SEEK_SET))
+	//{
+	//	fclose(p_file);
+	//	return -1;
+	//}
+	/* initialize the fingerprinter */
 	error = gnsdk_musicidstream_channel_audio_begin(
 		channel_handle,
-		44100, 16, 2
+		48000, 16, 1
 		);
-	printf("Past fingerprinter intialization.\n");
+
 	if (GNSDK_SUCCESS != error)
 	{
 		_display_last_error(__LINE__);
@@ -1046,7 +1011,7 @@ _process_audio(
 	 ** With the asynchronous nature of MusicID-Stream this call is non-blocking so it is ok to
 	 ** call on the UI thread.
 	 */
-	printf("Just before starting identify\n");
+
 	error = gnsdk_musicidstream_channel_identify(channel_handle);
 	if (GNSDK_SUCCESS != error)
 	{
@@ -1054,7 +1019,32 @@ _process_audio(
 		fclose(p_file);
 		return -1;
 	}
-	printf("Just before reading from wav\n");
+
+	unsigned long fmt_phys_width_bits = snd_pcm_format_physical_width(hwparams.format);
+	unsigned long fmt_phys_width_bits_per_frame = fmt_phys_width_bits * hwparams.channels;
+
+	while(!done){
+		//start capture
+		do_capture();
+		//write data to gnsdk
+		error = gnsdk_musicidstream_channel_audio_write(
+			channel_handle,
+			audiobuf,
+			hwparams.period_frames * fmt_phys_width_bits_per_frame / 8
+			);
+
+		if(GNSDK_SUCCESS != error)
+		{
+			if(GNSDKERR_SEVERE(error))
+			{
+				_display_last_error(__LINE__);
+			}
+			break;
+		}
+	}
+
+
+	#if 0
 	read_size = fread(pcm_audio, sizeof(char), 2048, p_file);
 	while (read_size > 0)
 	{
@@ -1078,7 +1068,7 @@ _process_audio(
 	}
 
 	fclose(p_file);
-
+	#endif
 	/*signal that we are done*/
 	if (GNSDK_SUCCESS == error)
 	{
@@ -1093,6 +1083,116 @@ _process_audio(
 
 }  /* _process_audio() */
 
+static inline void do_capture(void)
+{
+	size_t ret;
+	int channels = hwparams.channels;
+	snd_pcm_uframes_t period_size = hwparams.period_frames;
+
+	/* read in an ALSA period from hardware buffer */
+	ret = pcm_read(audiobuf, period_size);
+	if (ret != period_size)
+		printf("WARNING: copied %zi instead of %zi\n", ret, period_size);
+
+
+}
+
+/* *** Acquire ALSA PCM period signal from H/W *** */
+static inline ssize_t pcm_read(u_char * data, size_t rcount)
+{
+	ssize_t r;
+	size_t result = 0, count = rcount;
+	uint32_t channels = hwparams.channels;
+	snd_pcm_uframes_t period_size = hwparams.period_frames;
+	snd_pcm_format_t format = hwparams.format;
+	uint32_t fmt_phys_width_bits = snd_pcm_format_physical_width(format);
+	uint32_t fmt_phys_width_bytes = fmt_phys_width_bits / 8;
+	uint32_t fmt_phys_width_bytes_per_frame =
+	    fmt_phys_width_bytes * channels;
+
+	while (count > 0) {
+		r = snd_pcm_readi(handle, data, count);
+		if (r == -EAGAIN || (r >= 0 && (size_t) r < count)) {
+			snd_pcm_wait(handle, 1000);
+		} else if (r == -EPIPE) {
+			xrun();
+			xrunCount++;
+		} else if (r == -ESTRPIPE) {
+			suspend();
+		} else if (r < 0) {
+			printf("read error: %s", snd_strerror(r));
+			exit(EXIT_FAILURE);
+		}
+		if (r > 0) {
+			result += r;
+			count -= r;
+			data += r * fmt_phys_width_bytes_per_frame;
+		}
+	}
+	return result;
+}
+
+static void xrun(void)
+{
+	snd_pcm_status_t *status;
+	int res;
+
+	snd_pcm_status_alloca(&status);
+	if ((res = snd_pcm_status(handle, status)) < 0) {
+		printf("status error: %s", snd_strerror(res));
+		exit(EXIT_FAILURE);
+	}
+	if (snd_pcm_status_get_state(status) == SND_PCM_STATE_XRUN) {
+		struct timeval now, diff, tstamp;
+		gettimeofday(&now, 0);
+		snd_pcm_status_get_trigger_tstamp(status, &tstamp);
+		timersub(&now, &tstamp, &diff);
+		printf("%s!!! (at least %.3f ms long)\n",
+		      stream ==
+		      SND_PCM_STREAM_PLAYBACK ? "underrun" : "overrun",
+		      diff.tv_sec * 1000 + diff.tv_usec / 1000.0);
+		if ((res = snd_pcm_prepare(handle)) < 0) {
+			printf("xrun: prepare error: %s", snd_strerror(res));
+			exit(EXIT_FAILURE);
+		}
+		return;		/* ok, data should be accepted again */
+	}
+	if (snd_pcm_status_get_state(status) == SND_PCM_STATE_DRAINING) {
+		if (stream == SND_PCM_STREAM_CAPTURE) {
+			printf
+			    ("capture stream format change? attempting recover...\n");
+			if ((res = snd_pcm_prepare(handle)) < 0) {
+				printf("xrun(DRAINING): prepare error: %s",
+				      snd_strerror(res));
+				exit(EXIT_FAILURE);
+			}
+			return;
+		}
+	}
+	printf("read/write error, state = %s",
+	      snd_pcm_state_name(snd_pcm_status_get_state(status)));
+	exit(EXIT_FAILURE);
+}
+
+static void suspend(void)
+{
+	int res;
+
+	printf("Suspended. Trying resume. ");
+	fflush(stderr);
+	while ((res = snd_pcm_resume(handle)) == -EAGAIN)
+		sleep(1);	/* wait until suspend flag is released */
+	if (res < 0) {
+		printf("Failed. Restarting stream. ");
+		fflush(stderr);
+		if ((res = snd_pcm_prepare(handle)) < 0) {
+			printf("suspend: prepare error: %s", snd_strerror(res));
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	printf("Done.\n");
+}
 
 /***************************************************************************
  *
@@ -1120,8 +1220,6 @@ _do_sample_musicid_stream(
 	callbacks.callback_result_available   = _musicidstream_result_available_callback;
 	callbacks.callback_error              = _musicidstream_completed_with_error_callback;
 
-	printf("Got past callbacks.\n");
-
 	/* Create the channel handle */
 	error = gnsdk_musicidstream_channel_create(
 		user_handle,
@@ -1130,7 +1228,7 @@ _do_sample_musicid_stream(
 		GNSDK_NULL,          /* Optional data to be passed to the callbacks */
 		&channel_handle
 	);
-	printf("Got past channel handle creation.\n");
+
 	if (GNSDK_SUCCESS == error)
 	{
 		rc = _process_audio(channel_handle);
@@ -1164,7 +1262,7 @@ _musicidstream_identifying_status_callback(
 	** is complete so it stops feeding in audio */
 	if (status == gnsdk_musicidstream_identifying_ended)
 	{
-		printf("\n%s aborting\n\n", __FUNCTION__);
+		printf("\n%s aborting - overrun: %d\n\n", __FUNCTION__, xrunCount);
 		*pb_abort = GNSDK_TRUE;
 	}
 
@@ -1231,6 +1329,7 @@ _musicidstream_result_available_callback(
 	GNSDK_UNUSED(pb_abort);
 	GNSDK_UNUSED(callback_data);
 	GNSDK_UNUSED(channel_handle);
+	done = 1;
 }
 
 

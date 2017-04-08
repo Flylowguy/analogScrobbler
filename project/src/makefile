@@ -9,6 +9,6 @@ ifeq ($(filter static, $(MAKECMDGOALS)), static)
 	extra_libs = ../../xtralibs/ipp
 endif
 ARCH=armhf-32
-platformlibs += -lwiringPi
+platformlibs += -lasound
 include ../build_vars.mk
 include $(build_dir)/rules_samples.mk
